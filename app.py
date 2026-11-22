@@ -100,7 +100,7 @@ def create_ui():
     #status-box { font-weight: 500; font-size: 1.05rem; }
     """
 
-    with gr.Blocks(title="Local Image-to-3D Converter", css=custom_css) as demo:
+    with gr.Blocks(title="Local Image-to-3D Converter") as demo:
         gr.Markdown(
             """
             # Local Image-to-3D Converter
@@ -195,14 +195,15 @@ def create_ui():
             outputs=[history_dropdown],
         )
 
-    return demo
+    return demo, custom_css
 
 
 if __name__ == "__main__":
-    app = create_ui()
+    app, custom_css = create_ui()
     app.queue(max_size=2)
     app.launch(
         server_name=config.SERVER_NAME,
         server_port=config.SERVER_PORT,
         inbrowser=True,
+        css=custom_css,
     )

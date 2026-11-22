@@ -1,0 +1,16 @@
+# Python virtual environment
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Generated models
+output/
+
+# Downloaded model weights / caches
+*.ckpt
+*.safetensors
+*.bin
+.u2net/
