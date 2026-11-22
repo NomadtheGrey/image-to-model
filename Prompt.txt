@@ -1,0 +1,21 @@
+Build me a local image-to-3D-model converter app. I am on Windows 11 with an AMD Ryzen CPU and integrated Radeon graphics — there is NO Nvidia GPU, so everything must run CPU-only.
+
+ARCHITECTURE (important):
+- A local web app: Python backend, browser UI on localhost. Use Gradio for the UI — it has a built-in 3D model viewer.
+- The 3D engine must sit behind a clean interface so it can be swapped later: a module `engines/` with `local_triposr.py` implementing `generate(image_path) -> glb_path`, plus a stub `cloud_api.py` with the same function signature that raises NotImplementedError for now. Which engine runs is chosen by a setting in a `config.py`. The UI must never call the engine directly — only through this interface.
+
+ENGINE:
+- Use TripoSR (the open-source model by Stability AI / Tripo) for image-to-3D.
+- Pipeline: uploaded image → background removal (rembg) → TripoSR inference → export as .glb (also offer .obj).
+- CPU-only PyTorch. Expect a few minutes per model — show a progress/status message while it works, never a frozen screen.
+
+UI FEATURES:
+- Upload a PNG or JPG (single object on a plain background works best).
+- Toggle for background removal on/off.
+- "Generate" button, status line, 3D preview of the result (Gradio Model3D), and a Download button for the .glb.
+- Every generated model is saved to an `output/` folder with a timestamped filename, and a simple history list in the UI lets me re-preview or re-download earlier results.
+
+DELIVERABLES:
+- Full project with `requirements.txt`, a `run.bat` I can double-click to start the app, and a short README with install steps.
+- After building, test the pipeline end-to-end with a sample image and tell me: did it produce a valid .glb, and how long did generation take on CPU?
+- Keep it simple. No user accounts, no cloud deployment, no extra features I didn't ask for.
