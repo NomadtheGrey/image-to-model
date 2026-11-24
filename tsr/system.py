@@ -23,6 +23,59 @@ from .utils import (
 )
 
 
+# The TripoSR checkpoint was saved in 2024 against transformers 4.x, whose
+# ViT layers were named "encoder.layer.N.attention.attention.query" and
+# friends. transformers 5 renamed the same modules to
+# "layers.N.attention.q_proj" style, so a strict load_state_dict against a
+# modern transformers reports every ViT layer as both missing and
+# unexpected. The weights themselves are identical — only the names moved.
+# Translate a legacy name to its modern counterpart; the caller applies a
+# translation only when the model actually expects the new name, so this
+# stays a no-op on old transformers, and the strict load afterwards still
+# verifies every key and shape (a genuine mismatch keeps failing loudly).
+_LEGACY_VIT_SEGMENTS = (
+    ("attention.attention.query.", "attention.q_proj."),
+    ("attention.attention.key.", "attention.k_proj."),
+    ("attention.attention.value.", "attention.v_proj."),
+    ("attention.output.dense.", "attention.o_proj."),
+    ("intermediate.dense.", "mlp.fc1."),
+    ("output.dense.", "mlp.fc2."),
+    ("layernorm_before.", "layernorm_before."),
+    ("layernorm_after.", "layernorm_after."),
+)
+
+
+def _modern_vit_name(legacy_key: str):
+    """Return the transformers 5 name for a legacy ViT checkpoint key."""
+    marker = ".encoder.layer."
+    if marker not in legacy_key:
+        return None
+    head, tail = legacy_key.split(marker, 1)
+    layer_no, _, segments = tail.partition(".")
+    if not layer_no.isdigit():
+        return None
+    for old, new in _LEGACY_VIT_SEGMENTS:
+        if segments.startswith(old):
+            return f"{head}.layers.{layer_no}.{new}{segments[len(old):]}"
+    return None
+
+
+def _translate_legacy_vit_keys(ckpt: dict, model_keys) -> dict:
+    """Rename legacy ViT keys in a checkpoint to the names the model wants.
+
+    A key is renamed only when the model does not know the old name but
+    does know the translated one — on transformers 4.x nothing changes.
+    """
+    translated = {}
+    for key, value in ckpt.items():
+        candidate = _modern_vit_name(key)
+        if candidate is not None and key not in model_keys and candidate in model_keys:
+            translated[candidate] = value
+            continue
+        translated[key] = value
+    return translated
+
+
 class TSR(BaseModule):
     @dataclass
     class Config(BaseModule.Config):
@@ -67,6 +120,7 @@ class TSR(BaseModule):
         OmegaConf.resolve(cfg)
         model = cls(cfg)
         ckpt = torch.load(weight_path, map_location="cpu")
+        ckpt = _translate_legacy_vit_keys(ckpt, set(model.state_dict().keys()))
         model.load_state_dict(ckpt)
         return model
 

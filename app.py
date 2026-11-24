@@ -1,6 +1,9 @@
 """Gradio web application for Image-to-3D model conversion (CPU-only)."""
 import os
 import glob
+import queue
+import threading
+import time
 from pathlib import Path
 from typing import List
 
@@ -23,46 +26,82 @@ def on_generate(
     mc_resolution: int,
     progress=gr.Progress(track_tqdm=True),
 ):
-    """Handle generation button click."""
+    """Handle generation button click, streaming live status to the UI.
+
+    This is a generator on purpose: the engine runs in a worker thread and
+    posts every stage change to a queue, and each post becomes a status
+    line the user can read while the run continues. When a stage runs long
+    without posting (the mesh carve is one call), a heartbeat re-posts the
+    current stage with an elapsed counter — a status that visibly ticks is
+    how the user tells "working" from "hung" without opening Task Manager.
+    """
     if not image_path:
-        return None, None, None, "Please upload an image before clicking Generate.", gr.update()
+        yield None, None, None, "Please upload an image before clicking Generate.", gr.update()
+        return
 
-    def update_progress(val: float, desc: str):
-        progress(val, desc=desc)
+    events: "queue.Queue[tuple[float, str]]" = queue.Queue()
+    result = {}
 
-    try:
-        update_progress(0.05, "Initializing 3D generation...")
-        
-        # UI strictly calls engines.generate — never calling engine directly
-        glb_path = engines.generate(
-            image_path=image_path,
-            remove_bg=remove_bg,
-            foreground_ratio=foreground_ratio,
-            mc_resolution=int(mc_resolution),
-            progress_callback=update_progress,
-            export_obj=True,
-        )
+    def run_engine():
+        try:
+            # UI strictly calls engines.generate — never the engine directly.
+            result["glb_path"] = engines.generate(
+                image_path=image_path,
+                remove_bg=remove_bg,
+                foreground_ratio=foreground_ratio,
+                mc_resolution=int(mc_resolution),
+                progress_callback=lambda val, msg: events.put((val, msg)),
+                export_obj=True,
+            )
+        except Exception as exc:  # reported on the handler thread below
+            result["error"] = exc
 
-        obj_path = glb_path.replace(".glb", ".obj")
-        if not os.path.exists(obj_path):
-            obj_path = None
+    worker = threading.Thread(target=run_engine, daemon=True)
+    started = time.time()
+    worker.start()
 
-        filename = os.path.basename(glb_path)
-        status_msg = f"Done! Generated 3D model saved to output/{filename}"
-        
-        # Refresh history list
-        updated_history = get_history_files()
-        return (
-            glb_path,        # 3D preview
-            glb_path,        # Download GLB
-            obj_path,        # Download OBJ
-            status_msg,      # Status text
-            gr.update(choices=updated_history, value=filename),
-        )
-    except Exception as exc:
-        err_msg = f"Generation failed: {str(exc)}"
+    last_msg = "Starting generation..."
+    while worker.is_alive():
+        try:
+            val, msg = events.get(timeout=2.0)
+            last_msg = msg
+            progress(val, desc=msg)
+            yield gr.update(), gr.update(), gr.update(), msg, gr.update()
+        except queue.Empty:
+            elapsed = int(time.time() - started)
+            yield (
+                gr.update(),
+                gr.update(),
+                gr.update(),
+                f"{last_msg} — {elapsed}s elapsed",
+                gr.update(),
+            )
+    worker.join()
+
+    if "error" in result:
+        exc = result["error"]
         print(f"[app] Error: {exc}")
-        return None, None, None, err_msg, gr.update()
+        yield None, None, None, f"Generation failed: {exc}", gr.update()
+        return
+
+    glb_path = result["glb_path"]
+    obj_path = glb_path.replace(".glb", ".obj")
+    if not os.path.exists(obj_path):
+        obj_path = None
+
+    filename = os.path.basename(glb_path)
+    elapsed = int(time.time() - started)
+    status_msg = f"Done in {elapsed}s! Generated 3D model saved to output/{filename}"
+
+    # Refresh history list
+    updated_history = get_history_files()
+    yield (
+        glb_path,        # 3D preview
+        glb_path,        # Download GLB
+        obj_path,        # Download OBJ
+        status_msg,      # Status text
+        gr.update(choices=updated_history, value=filename),
+    )
 
 
 def on_select_history(selected_name: str):
@@ -143,7 +182,13 @@ def create_ui():
                         )
 
                 generate_btn = gr.Button("Generate 3D Model", variant="primary", size="lg")
-                status_box = gr.Markdown("Ready. Upload an image and click Generate.", elem_id="status-box")
+                status_box = gr.Markdown(
+                    "Ready. Upload an image and click Generate. The status "
+                    "line here narrates every stage as it happens — on the "
+                    "very first run that includes one-time model downloads "
+                    "(about 1.8 GB total); later runs skip those.",
+                    elem_id="status-box",
+                )
 
             # Right column: 3D Preview and Downloads
             with gr.Column(scale=6):
