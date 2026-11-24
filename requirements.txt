@@ -3,7 +3,10 @@ torch
 torchvision
 gradio>=4.20.0
 rembg[cpu]>=2.0.50
-mcubes>=0.1.6
+# Marching cubes comes from scikit-image (declared here, also pulled in by
+# rembg). Do NOT add a bare "mcubes" requirement: PyPI's "mcubes" package is
+# a different library from PyMCubes and lacks the marching_cubes() function.
+scikit-image>=0.22
 trimesh>=4.0.5
 transformers>=4.35.0
 einops>=0.7.0
